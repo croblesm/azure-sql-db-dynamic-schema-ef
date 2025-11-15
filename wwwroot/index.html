@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+	<title>TodoMVC</title>
+	<script src="https://unpkg.com/vue@3.5.18"></script>
+	<link rel="stylesheet" type="text/css" href="https://unpkg.com/todomvc-app-css@2.2.0/index.css" />
+	<style>
+		[v-cloak] {
+			display: none;
+		}
+		
+		.todo-tags {
+			margin: 5px 0 10px 58px;
+			display: flex;
+			flex-wrap: wrap;
+			gap: 4px;
+		}
+		
+		.tag {
+			display: inline-flex;
+			align-items: center;
+			background: #f0f0f0;
+			border: 1px solid #ddd;
+			border-radius: 12px;
+			padding: 2px 8px;
+			font-size: 11px;
+			color: #555;
+		}
+		
+		.tag-remove {
+			background: none;
+			border: none;
+			color: #999;
+			cursor: pointer;
+			margin-right: 4px;
+			padding: 0;
+			font-size: 12px;
+			width: 12px;
+			height: 12px;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+		}
+		
+		.tag-remove:hover {
+			color: #cc0000;
+		}
+		
+		.add-tag-btn {
+			background: none;
+			border: 1px dashed #ddd;
+			border-radius: 12px;
+			padding: 2px 8px;
+			font-size: 11px;
+			color: #999;
+			cursor: pointer;
+			display: inline-flex;
+			align-items: center;
+			gap: 2px;
+		}
+		
+		.add-tag-btn:hover {
+			border-color: #999;
+			color: #666;
+		}
+		
+		.tag-input {
+			border: 1px solid #ddd;
+			border-radius: 12px;
+			padding: 2px 8px;
+			font-size: 11px;
+			outline: none;
+			min-width: 60px;
+		}
+	</style>
+</head>
+
+<body>
+	<section class="todoapp">
+		<header class="header">
+			<h1>todos</h1>
+			<input class="new-todo" autofocus autocomplete="off" placeholder="What needs to be done?" v-model="newTodo"
+				@keyup.enter="addTodo" />
+		</header>
+		<section class="main" v-show="todos.length" v-cloak>
+			<input id="toggle-all" @change="completeAll()" class="toggle-all" type="checkbox" v-model="allDone" />
+			<label for="toggle-all"></label>
+			<ul class="todo-list">
+				<li v-for="todo in filteredTodos" class="todo" :key="todo.id"
+					:class="{ completed: todo.completed, editing: todo == editedTodo }">
+					<div class="view">
+						<input @change="completeTodo(todo)" class="toggle" type="checkbox" v-model="todo.completed" />
+						<label @dblclick="editTodo(todo)">{{ todo.title }}</label>
+						<button class="destroy" @click="removeTodo(todo)"></button>
+					</div>
+					<input class="edit" type="text" v-model="todo.title" v-todo-focus="todo == editedTodo"
+						@blur="doneEdit(todo)" @keyup.enter="doneEdit(todo)" @keyup.esc="cancelEdit(todo)" />
+					
+					<!-- Tags section -->
+					<div class="todo-tags" v-if="!todo.editing">
+						<span v-for="tag in todo.tags" :key="tag" class="tag">
+							<button class="tag-remove" @click="removeTag(todo, tag)">×</button>
+							{{ tag }}
+						</span>
+						<input 
+							v-if="todo.showTagInput" 
+							class="tag-input" 
+							v-model="todo.newTag"
+							@keyup.enter="addTag(todo)"
+							@blur="cancelAddTag(todo)"
+							@keyup.esc="cancelAddTag(todo)"
+							v-todo-focus="todo.showTagInput"
+							placeholder="Tag name"
+						/>
+						<button v-else class="add-tag-btn" @click="showTagInput(todo)">
+							+ add tag
+						</button>
+					</div>
+				</li>
+			</ul>
+		</section>
+		<footer class="footer" v-show="todos.length" v-cloak>
+			<span class="todo-count">
+				<strong>{{ remaining }}</strong> {{ pluralize(remaining) }} left
+			</span>
+			<ul class="filters">
+				<li>
+					<a href="#/all" :class="{ selected: visibility == 'all' }">All</a>
+				</li>
+				<li>
+					<a href="#/active" :class="{ selected: visibility == 'active' }">Active</a>
+				</li>
+				<li>
+					<a href="#/completed" :class="{ selected: visibility == 'completed' }">Completed</a>
+				</li>
+			</ul>
+			<button class="clear-completed" @click="removeCompleted" v-show="todos.length > remaining">
+				Clear completed
+			</button>
+		</footer>
+	</section>
+	<footer class="info">
+		<p>Double-click to edit a todo</p>
+		<p>Original <a href="https://github.com/vuejs/vuejs.org/tree/master/src/v2/examples/vue-20-todomvc">Vue.JS Sample</a> by <a href="http://evanyou.me">Evan You</a></p>
+		<p>Azure Function + Azure SQL Backend Sample by <a href="http://davidemauri.it">Davide Mauri</a></p>
+		<p>Part of <a href="http://todomvc.com">TodoMVC</a></p>
+	</footer>
+
+	<script>
+		API = "http://localhost:5000/todo/hybrid";
+		HEADERS = { 'Accept': 'application/json', 'Content-Type': 'application/json' };		
+
+		// visibility filters
+		var filters = {
+			all: function (todos) {
+				return todos;
+			},
+			active: function (todos) {
+				return todos.filter(function (todo) {
+					return !todo.completed;
+				});
+			},
+			completed: function (todos) {
+				return todos.filter(function (todo) {
+					return todo.completed;
+				});
+			}
+		};
+
+		// app Vue instance
+		const { createApp } = Vue;
+		var app = createApp({
+			// app initial state
+			data() {
+				return {
+					todos: [],
+					newTodo: "",
+					editedTodo: null,
+					visibility: "all"
+				};
+			},
+
+			// initialize data 
+			// by loading it from REST API
+			mounted() {
+				fetch(API + "/", {headers: HEADERS, method: "GET"})
+				.then(res => {
+					return res.json();
+				})
+				.then(res => {				
+					this.todos = res == null ? [] : res;
+					// Initialize tags and UI state for existing todos
+					this.todos.forEach(todo => {
+						if (!todo.tags) todo.tags = [];
+						todo.showTagInput = false;
+						todo.newTag = '';
+					});
+				})
+			},
+
+			// computed properties
+			// http://vuejs.org/guide/computed.html
+			computed: {
+				filteredTodos() {
+					return filters[this.visibility](this.todos);
+				},
+				remaining() {
+					return filters.active(this.todos).length;
+				},
+				allDone: {
+					get() {
+						return this.remaining === 0;
+					},
+					set(value) {
+						this.todos.forEach(function (todo) {
+							todo.completed = value;
+						});
+					}
+				}
+			},
+
+			methods: {
+				pluralize(n) {
+					return n === 1 ? "item" : "items";
+				},
+
+				// methods that implement data logic.
+				// note there's no DOM manipulation here at all.
+				addTodo() {
+					var value = this.newTodo && this.newTodo.trim();
+					if (!value) {
+						return;
+					}
+					fetch(API + "/", {headers: HEADERS, method: "POST", body: JSON.stringify({title: value, tags: []})})
+					.then(res => {					
+						if (res.ok) {												
+							this.newTodo = ''
+							return res.json();
+						}
+					}).then(res => {
+						// Initialize tag UI state for new todo
+						if (!res.tags) res.tags = [];
+						res.showTagInput = false;
+						res.newTag = '';
+						this.todos.push(res);
+					})
+				},
+
+				completeTodo(todo) {
+					fetch(API + `/${todo.id}`, {headers: HEADERS, method: "PATCH", body: JSON.stringify({completed: todo.completed})});
+				},
+
+				completeAll() {
+					this.todos.forEach(t => {
+						fetch(API + `/${t.id}`, {headers: HEADERS, method: "PATCH", body: JSON.stringify({completed: t.completed})});
+					})
+				},
+
+				removeTodo(todo) {					
+					var id  = todo.id;
+					fetch(API + `/${id}`, {headers: HEADERS, method: "DELETE"}).
+					then(res => {
+						if (res.ok) {
+							var index = this.todos.indexOf(todo);
+							this.todos.splice(index, 1);
+						}
+					})				
+				},
+
+				editTodo(todo) {
+					this.beforeEditCache = todo.title;
+					this.editedTodo = todo;
+				},
+
+				doneEdit(todo) {
+					if (!this.editedTodo) {
+						return;
+					}
+					this.editedTodo = null;
+					todo.title = todo.title.trim();
+					if (!todo.title) {
+						this.removeTodo(todo);
+					} else {						
+						fetch(API + `/${todo.id}`, {headers: HEADERS, method: "PUT", body: JSON.stringify({title: todo.title, tags: todo.tags})});
+					}
+				},
+
+				cancelEdit(todo) {
+					this.editedTodo = null;
+					todo.title = this.beforeEditCache;
+				},
+
+				removeCompleted() {
+					filters.completed(this.todos).forEach(t => {						
+						this.removeTodo(t);
+					});					
+				},
+
+				// Tag-related methods
+				showTagInput(todo) {
+					todo.showTagInput = true;
+					todo.newTag = '';
+				},
+
+				addTag(todo) {
+					const tag = todo.newTag && todo.newTag.trim();
+					if (tag && !todo.tags.includes(tag)) {
+						todo.tags.push(tag);
+						// Update tags on the server
+						fetch(API + `/${todo.id}`, {headers: HEADERS, method: "PATCH", body: JSON.stringify({tags: todo.tags})});
+					}
+					todo.showTagInput = false;
+					todo.newTag = '';
+				},
+
+				removeTag(todo, tag) {
+					const index = todo.tags.indexOf(tag);
+					if (index > -1) {
+						todo.tags.splice(index, 1);
+						// Update tags on the server
+						fetch(API + `/${todo.id}`, {headers: HEADERS, method: "PATCH", body: JSON.stringify({tags: todo.tags})});
+					}
+				},
+
+				cancelAddTag(todo) {
+					todo.showTagInput = false;
+					todo.newTag = '';
+				}
+			},
+
+			// a custom directive to wait for the DOM to be updated
+			// before focusing on the input field.
+			// http://vuejs.org/guide/custom-directive.html
+			directives: {
+				"todo-focus": function (el, binding) {
+					if (binding.value) {
+						el.focus();
+					}
+				}
+			}
+		});
+
+		// mount
+		const mountedApp = app.mount(".todoapp");
+
+		// handle routing
+		function onHashChange() {
+			var visibility = window.location.hash.replace(/#\/?/, "");
+			if (filters[visibility]) {
+				mountedApp.visibility = visibility;
+			} else {
+				window.location.hash = "";
+				mountedApp.visibility = "all";
+			}
+		}
+
+		window.addEventListener("hashchange", onHashChange);
+		onHashChange();
+	</script>
+</body>
+
+</html>

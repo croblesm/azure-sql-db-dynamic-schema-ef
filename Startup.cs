@@ -48,6 +48,9 @@ public class Startup(IConfiguration configuration)
 
         app.UseCors("AllowOrigin");
 
+        app.UseDefaultFiles();
+        app.UseStaticFiles();
+
         app.UseEndpoints(endpoints => endpoints.MapControllers());
     }
 }

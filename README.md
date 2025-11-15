@@ -24,33 +24,120 @@ repository, but using Entity Framework Core instead of Dapper. Since EF Core 7, 
 
 https://learn.microsoft.com/ef/core/what-is-new/ef-core-7.0/whatsnew#json-columns
 
-## Demo with local database
+## Local Database Setup
 
-Make sure you have SQL Server 2025 install. The easiest way to do this is to use Docker or Podman and the VSCode MSSQL extension with a [local SQL Server container](https://learn.microsoft.com/sql/tools/visual-studio-code-extensions/mssql/mssql-local-container?view=sql-server-ver17).
+Make sure you have SQL Server 2025 installed. The easiest way to do this is to use Docker or Podman and the VSCode MSSQL extension with a [local SQL Server container](https://learn.microsoft.com/sql/tools/visual-studio-code-extensions/mssql/mssql-local-container?view=sql-server-ver17).
 
-IF you don't want to use a local database, you can also use an Azure SQL Database. You can use the *Free Offer* to have a [completely free Azure SQL database to use](https://learn.microsoft.com/azure/azure-sql/database/free-offer?view=azuresql).
+If you don't want to use a local database, you can also use an Azure SQL Database. You can use the *Free Offer* to have a [completely free Azure SQL database to use](https://learn.microsoft.com/azure/azure-sql/database/free-offer?view=azuresql).
 
-Once you have the database running, create a new database named `dynamic-schema-ef` using the `Database/00-create.sql` script to also create a user for the sample application. 
+### Option 1: Using SA User (Simplest - Recommended for Local Development)
 
-The `Database/01-hybrid.sql` script is there only for reference in case you want to create the database schema manually, but it is not needed if you use the Entity Framework Core migrations.
+This is the simplest approach as the SA user has all permissions needed to create the database and run migrations.
 
-Generate migrations of not done yet
+1. **Copy the environment file:**
+   ```bash
+   cp .env.sample .env
+   ```
 
-```powershell
+2. **Update `.env` with your SA credentials:**
+   ```
+   MSSQL="SERVER=localhost;DATABASE=dynamic-schema-ef;UID=sa;PWD=P@ssw0rd!;TrustServerCertificate=True"
+   ```
+   Replace `P@ssw0rd!` with your actual SA password.
+
+3. **Install Entity Framework Core tools (if not already installed):**
+   ```bash
+   dotnet tool install --global dotnet-ef
+   ```
+
+4. **Create the database and run migrations:**
+
+   Since `dotnet ef` doesn't automatically load the .env file, you need to provide the connection string directly:
+
+   ```bash
+   dotnet ef database update --connection "SERVER=localhost;DATABASE=dynamic-schema-ef;UID=sa;PWD=P@ssw0rd!;TrustServerCertificate=True"
+   ```
+
+   Replace `P@ssw0rd!` with your actual SA password.
+
+   This will:
+   - Create the `dynamic-schema-ef` database if it doesn't exist
+   - Create the `global_sequence` sequence
+   - Create the `todo_hybrid` table with JSON column support
+
+5. **Run the application:**
+   ```bash
+   dotnet watch
+   ```
+
+### Option 2: Using Dedicated Application User (Production-like Setup)
+
+This approach creates a dedicated user with limited permissions, similar to a production environment.
+
+1. **Create the database and user using SA:**
+
+   Connect to SQL Server with your SA user and run:
+   ```bash
+   sqlcmd -S localhost -U sa -P P@ssw0rd! -i Database/00-create.sql
+   ```
+
+   Or execute the `Database/00-create.sql` script manually. This will:
+   - Create the `dynamic-schema-ef` database
+   - Create the `web` schema
+   - Create the `dynamic-schema-test-user` login and user
+   - Grant `db_datareader` and `db_datawriter` permissions
+
+2. **Grant additional permissions for migrations:**
+
+   The application user needs additional permissions to run EF migrations. Connect with SA and run:
+   ```sql
+   USE [dynamic-schema-ef];
+   ALTER ROLE db_ddladmin ADD MEMBER [dynamic-schema-test-user];
+   ```
+
+3. **Copy and configure environment file:**
+   ```bash
+   cp .env.sample .env
+   ```
+
+   Update `.env` to use the application user:
+   ```
+   MSSQL="SERVER=localhost;DATABASE=dynamic-schema-ef;UID=dynamic-schema-test-user;PWD=Super_Str0ng*P@ZZword!;TrustServerCertificate=True"
+   ```
+
+4. **Run migrations:**
+
+   Since `dotnet ef` doesn't automatically load the .env file, provide the connection string directly:
+
+   ```bash
+   dotnet ef database update --connection "SERVER=localhost;DATABASE=dynamic-schema-ef;UID=dynamic-schema-test-user;PWD=Super_Str0ng*P@ZZword!;TrustServerCertificate=True"
+   ```
+
+5. **Run the application:**
+   ```bash
+   dotnet watch
+   ```
+
+### Regenerating Migrations (Optional)
+
+If you need to regenerate migrations (migrations already exist in this project):
+
+```bash
+# Remove existing migrations
+rm -rf Migrations/
+
+# Create new migration
 dotnet ef migrations add InitialCreate
-```
 
-Set the environment variable
-
-```powershell
-$env:MSSQL="Server=tcp:127.0.0.1,1433;Database=dynamic-schema-ef;User ID=<db-admin-user>;Password=<db-admin-password>;TrustServerCertificate=True"
-```
-
-Deploy the database
-
-```powershell
+# Apply migration
 dotnet ef database update
 ```
+
+### Notes
+
+- **Database Creation**: When using Option 1 (SA user), EF Core will automatically create the `dynamic-schema-ef` database if it doesn't exist. No manual database creation is needed.
+- **Schema Usage**: The EF migrations create objects in the default `dbo` schema. The `web` schema created by `Database/00-create.sql` is not currently used by the application but is included for reference.
+- **Permissions**: For Option 2, the `dynamic-schema-test-user` needs `db_ddladmin` role to run migrations. In production, you would typically run migrations with an admin account during deployment and use a limited user for the running application.
 
 # Run the sample app
 
